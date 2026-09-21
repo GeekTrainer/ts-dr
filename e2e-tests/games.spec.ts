@@ -1,6 +1,127 @@
 import { test, expect, type Response } from '@playwright/test';
 
 test.describe('Game Listing and Navigation', () => {
+  /** Verifies multi-category filtering uses OR semantics. */
+  test('should filter games by one or more categories', async ({ page }) => {
+    await page.goto('/');
+
+    const strategyFilter = page.getByRole('checkbox', { name: 'Strategy' });
+    const puzzleFilter = page.getByRole('checkbox', { name: 'Puzzle' });
+    const visibleGameCards = page.locator('[data-testid="game-card"]:not([hidden])');
+
+    await test.step('Filter by one category', async () => {
+      await strategyFilter.check();
+
+      await expect(visibleGameCards).toHaveCount(4);
+      await expect(page.getByTestId('filter-results-status')).toHaveText('4 games shown');
+      await expect.poll(() => page.evaluate(() => new URLSearchParams(location.search).getAll('category').length)).toBe(1);
+    });
+
+    await test.step('Add another category with OR matching', async () => {
+      await puzzleFilter.check();
+
+      await expect(visibleGameCards).toHaveCount(8);
+      await expect(page.getByTestId('filter-results-status')).toHaveText('8 games shown');
+      await expect.poll(() => page.evaluate(() => new URLSearchParams(location.search).getAll('category').length)).toBe(2);
+    });
+  });
+
+  /** Verifies selecting a publisher limits the visible catalog. */
+  test('should filter games by publisher', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByLabel('Publisher').selectOption({ label: 'CodeForge Studios' });
+
+    await expect(page.locator('[data-testid="game-card"]:not([hidden])')).toHaveCount(6);
+    await expect(page.getByTestId('filter-results-status')).toHaveText('6 games shown');
+    await expect.poll(() => page.evaluate(() => new URLSearchParams(location.search).has('publisher'))).toBe(true);
+  });
+
+  /** Verifies category and publisher criteria combine with AND semantics. */
+  test('should combine category and publisher filters', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('checkbox', { name: 'Strategy' }).check();
+    await page.getByLabel('Publisher').selectOption({ label: 'DevMasters Inc.' });
+
+    const visibleGameCards = page.locator('[data-testid="game-card"]:not([hidden])');
+    await expect(visibleGameCards).toHaveCount(1);
+    await expect(visibleGameCards.getByTestId('game-category')).toHaveText('Strategy');
+    await expect(visibleGameCards.getByTestId('game-publisher')).toHaveText('DevMasters Inc.');
+    await expect(page.getByTestId('filter-results-status')).toHaveText('1 game shown');
+  });
+
+  /** Verifies bookmarkable filter state is restored after navigation. */
+  test('should restore filters from the URL after reload', async ({ page }) => {
+    await page.goto('/');
+
+    const strategyFilter = page.getByRole('checkbox', { name: 'Strategy' });
+    const publisherFilter = page.getByLabel('Publisher');
+    await strategyFilter.check();
+    await publisherFilter.selectOption({ label: 'GitHub Games' });
+
+    const selectedPublisherId = await publisherFilter.inputValue();
+    const filteredUrl = page.url();
+    await page.reload();
+
+    await expect(page).toHaveURL(filteredUrl);
+    await expect(strategyFilter).toBeChecked();
+    await expect(publisherFilter).toHaveValue(selectedPublisherId);
+    await expect(page.locator('[data-testid="game-card"]:not([hidden])')).toHaveCount(1);
+  });
+
+  /** Verifies clearing filters restores the complete catalog and clean URL. */
+  test('should clear selected filters and restore the full catalog', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('checkbox', { name: 'Action' }).check();
+    await page.getByLabel('Publisher').selectOption({ label: 'CodeForge Studios' });
+    const clearFilters = page.getByTestId('clear-game-filters');
+
+    await expect(clearFilters).toBeEnabled();
+    await clearFilters.click();
+
+    await expect(page.getByRole('checkbox', { name: 'Action' })).not.toBeChecked();
+    await expect(page.getByLabel('Publisher')).toHaveValue('');
+    await expect(page.locator('[data-testid="game-card"]:not([hidden])')).toHaveCount(21);
+    await expect(page.getByTestId('filter-results-status')).toHaveText('21 games shown');
+    await expect(page).toHaveURL('/');
+    await expect(clearFilters).toBeDisabled();
+  });
+
+  /** Verifies the empty state and live status when no cards match. */
+  test('should show an empty state when no games match', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByTestId('game-card').evaluateAll((cards) => {
+      for (const card of cards) {
+        card.setAttribute('data-publisher-id', 'no-match');
+      }
+    });
+    await page.getByLabel('Publisher').selectOption({ label: 'Ops Interactive' });
+
+    await expect(page.getByTestId('games-grid')).toBeHidden();
+    await expect(page.getByTestId('filtered-games-empty')).toBeVisible();
+    await expect(page.getByTestId('filter-results-status')).toHaveText('0 games shown');
+  });
+
+  /** Verifies native filter controls remain keyboard operable. */
+  test('should operate filter controls with the keyboard', async ({ page }) => {
+    await page.goto('/');
+
+    const strategyFilter = page.getByRole('checkbox', { name: 'Strategy' });
+    await strategyFilter.focus();
+    await expect(strategyFilter).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(strategyFilter).toBeChecked();
+
+    const publisherFilter = page.getByLabel('Publisher');
+    await publisherFilter.focus();
+    await expect(publisherFilter).toBeFocused();
+    await publisherFilter.selectOption({ label: 'GitHub Games' });
+    await expect(page.getByTestId('filter-results-status')).toHaveText('1 game shown');
+  });
+
   test('should display games with titles on index page', async ({ page }) => {
     await test.step('Navigate to homepage', async () => {
       await page.goto('/');

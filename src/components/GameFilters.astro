@@ -1,0 +1,190 @@
+---
+import type { Category, Publisher } from '../types/game';
+
+/** Data required to render the catalog filter controls. */
+interface Props {
+    /** Categories available in the prerendered catalog. */
+    categories: Category[];
+    /** Publishers available in the prerendered catalog. */
+    publishers: Publisher[];
+    /** Total number of games rendered before client-side filtering. */
+    totalGames: number;
+}
+
+const { categories, publishers, totalGames } = Astro.props;
+---
+
+<section
+    class="mb-8 rounded-xl border border-slate-700 bg-slate-800/60 p-5 shadow-lg backdrop-blur-sm"
+    aria-labelledby="game-filters-heading"
+    data-testid="game-filters"
+>
+    <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+            <h2 id="game-filters-heading" class="text-xl font-semibold text-slate-100">Filter games</h2>
+            <p class="text-sm text-slate-400">Choose one or more categories and optionally a publisher.</p>
+        </div>
+        <button
+            id="clear-game-filters"
+            type="button"
+            class="self-start rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:border-blue-500 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:self-auto"
+            data-testid="clear-game-filters"
+            disabled
+        >
+            Clear filters
+        </button>
+    </div>
+
+    <form id="game-filters-form" class="grid gap-6 lg:grid-cols-[2fr_1fr]" data-testid="game-filters-form">
+        <fieldset>
+            <legend class="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-300">Categories</legend>
+            <div class="flex flex-wrap gap-3">
+                {categories.map((category) => (
+                    <label
+                        class="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-sm text-slate-200 transition-colors hover:border-blue-500 hover:bg-slate-700"
+                    >
+                        <input
+                            type="checkbox"
+                            name="category"
+                            value={category.id}
+                            class="h-4 w-4 rounded border-slate-500 bg-slate-800 text-blue-600 accent-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            data-testid={`category-filter-${category.id}`}
+                        />
+                        <span>{category.name}</span>
+                    </label>
+                ))}
+            </div>
+        </fieldset>
+
+        <div>
+            <label for="publisher-filter" class="mb-3 block text-sm font-semibold uppercase tracking-wide text-slate-300">
+                Publisher
+            </label>
+            <select
+                id="publisher-filter"
+                name="publisher"
+                class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                data-testid="publisher-filter"
+            >
+                <option value="">All publishers</option>
+                {publishers.map((publisher) => (
+                    <option value={publisher.id}>{publisher.name}</option>
+                ))}
+            </select>
+        </div>
+    </form>
+
+    <p
+        id="filter-results-status"
+        class="mt-5 text-sm font-medium text-blue-300"
+        role="status"
+        aria-live="polite"
+        data-testid="filter-results-status"
+    >
+        {totalGames} {totalGames === 1 ? 'game' : 'games'} shown
+    </p>
+</section>
+
+<script>
+    const form = document.querySelector<HTMLFormElement>('#game-filters-form');
+    const categoryInputs = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[name="category"]'),
+    );
+    const publisherSelect = document.querySelector<HTMLSelectElement>('#publisher-filter');
+    const clearButton = document.querySelector<HTMLButtonElement>('#clear-game-filters');
+    const status = document.querySelector<HTMLElement>('#filter-results-status');
+    const gamesGrid = document.querySelector<HTMLElement>('[data-testid="games-grid"]');
+    const emptyState = document.querySelector<HTMLElement>('#filtered-games-empty');
+    const gameCards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="game-card"]'));
+
+    if (
+        form
+        && publisherSelect
+        && clearButton
+        && status
+        && gamesGrid
+        && emptyState
+        && gameCards.length > 0
+    ) {
+        const validCategoryIds = new Set(categoryInputs.map((input) => input.value));
+        const validPublisherIds = new Set(
+            Array.from(publisherSelect.options)
+                .map((option) => option.value)
+                .filter((value) => value !== ''),
+        );
+
+        /** Applies the selected filters to cards and optionally updates the URL. */
+        const applyFilters = (updateUrl: boolean): void => {
+            const selectedCategoryIds = new Set(
+                categoryInputs.filter((input) => input.checked).map((input) => input.value),
+            );
+            const selectedPublisherId = publisherSelect.value;
+            let visibleGames = 0;
+
+            for (const card of gameCards) {
+                const matchesCategory = selectedCategoryIds.size === 0
+                    || (card.dataset.categoryId !== undefined && selectedCategoryIds.has(card.dataset.categoryId));
+                const matchesPublisher = selectedPublisherId === ''
+                    || card.dataset.publisherId === selectedPublisherId;
+                const matches = matchesCategory && matchesPublisher;
+
+                card.hidden = !matches;
+                if (matches) {
+                    visibleGames += 1;
+                }
+            }
+
+            gamesGrid.hidden = visibleGames === 0;
+            emptyState.classList.toggle('hidden', visibleGames !== 0);
+            status.textContent = `${visibleGames} ${visibleGames === 1 ? 'game' : 'games'} shown`;
+            clearButton.disabled = selectedCategoryIds.size === 0 && selectedPublisherId === '';
+
+            if (updateUrl) {
+                const url = new URL(window.location.href);
+                url.searchParams.delete('category');
+                url.searchParams.delete('publisher');
+
+                for (const input of categoryInputs) {
+                    if (input.checked) {
+                        url.searchParams.append('category', input.value);
+                    }
+                }
+
+                if (selectedPublisherId !== '') {
+                    url.searchParams.set('publisher', selectedPublisherId);
+                }
+
+                window.history.replaceState({}, '', url);
+            }
+        };
+
+        /** Restores valid filter selections from the current URL query string. */
+        const restoreFiltersFromUrl = (): void => {
+            const params = new URLSearchParams(window.location.search);
+            const selectedCategoryIds = new Set(
+                params.getAll('category').filter((id) => validCategoryIds.has(id)),
+            );
+            const publisherId = params.get('publisher');
+
+            for (const input of categoryInputs) {
+                input.checked = selectedCategoryIds.has(input.value);
+            }
+            publisherSelect.value = publisherId !== null && validPublisherIds.has(publisherId)
+                ? publisherId
+                : '';
+            applyFilters(false);
+        };
+
+        form.addEventListener('change', () => applyFilters(true));
+        clearButton.addEventListener('click', () => {
+            for (const input of categoryInputs) {
+                input.checked = false;
+            }
+            publisherSelect.value = '';
+            applyFilters(true);
+        });
+        window.addEventListener('popstate', restoreFiltersFromUrl);
+
+        restoreFiltersFromUrl();
+    }
+</script>
